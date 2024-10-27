@@ -8,10 +8,13 @@ const path = require("path");
 const cors = require("cors");
 const { type } = require("os");
 const { error } = require("console");
+require('dotenv').config();
+const stripe = require("stripe")(process.env.STRIPE_SECRECT_KEY);
 
 app.use(express.json());
-app.use(cors());
-
+app.use(cors({ // Adjust this to your frontend's URL
+    credentials: true // Allow credentials (cookies, authorization headers)
+}));
 const SECRET_KEY = 'BJ_STORE_SECRET_KEY'
 
 
@@ -221,46 +224,102 @@ app.get('/popularInWomen', async(req, res)=>{
     res.send(popular_in_women);
 })
 
-const fetchUser = async(req, res, next)=> {
+const fetchUser = async(req, res, next) => {
     const token = req.header('auth-token');
-    if(!token){
-        res.status(401).send({error: "Unauthorized"});
-    }else{
+    if (!token) {
+        return res.status(401).send({ error: "Unauthorized" });
+    } else {
         try {
-            const data = jwt(token, SECRET_KEY);
+            const data = jwt.verify(token, SECRET_KEY); // Use verify instead of calling jwt directly
             req.user = data.user;
             next();
         } catch (error) {
-            res.status(401).send({error: 'Authenticate using valid token'});
+            res.status(401).send({ error: 'Authenticate using valid token' });
         }
     }
 }
 
-app.post('/addToCart', fetchUser, async(req, res)=>{
-    console.log("Removed", req.body.itemID);
-    let userData = await Users.findOne({_id: req.user.id});
-    userData.cartData[req.body.itemID] =+ 1;
+app.post('/addToCart', fetchUser, async (req, res) => {
+    console.log("Added", req.body.itemID);
+    let userData = await Users.findOne({ _id: req.user.id });
 
-    await Users.findOneAndUpdate({_id: req.user.id, cartData: userData.cartData});
+    // Increment the item in the cart
+    userData.cartData[req.body.itemID] = (userData.cartData[req.body.itemID] || 0) + 1;
+
+    // Update the user's cartData using $set
+    await Users.findOneAndUpdate(
+        { _id: req.user.id }, // filter
+        { $set: { cartData: userData.cartData } } // update
+    );
     res.send("Added");
 });
 
-app.post('/removeFromCart', fetchUser, async(req, res)=>{
+app.post('/removeFromCart', fetchUser, async (req, res) => {
     console.log("Removed", req.body.itemID);
-    let userData = await Users.findOne({_id: req.user.id});
-    if(userData.cartData[req.body.itemID] > 0){
-        userData.cartData[req.body.itemID] =- 1;
-    }
-    
-    await Users.findOneAndUpdate({_id: req.user.id, cartData: userData.cartData});
-    res.send("Removed");
-})
+    let userData = await Users.findOne({ _id: req.user.id });
 
-app.post('getCart', fetchUser, async(req, res)=>{
+    if (userData.cartData[req.body.itemID] > 0) {
+        // Decrement the item in the cart
+        userData.cartData[req.body.itemID] -= 1;
+
+        // Update the user's cartData using $set
+        await Users.findOneAndUpdate(
+            { _id: req.user.id }, // filter
+            { $set: { cartData: userData.cartData } } // update
+        );
+    }
+    res.send("Removed");
+});
+
+app.post('/getCart', fetchUser, async(req, res)=>{
     console.log("Get Cart");
     let userData = await Users.findOne({_id: req.user.id});
     res.json(userData.cartData);
 })
+
+app.post("/create-checkout-session", fetchUser, async (req, res) => {
+    const items = req.body.items;
+    if (!items || items.length === 0) {
+        return res.status(400).json({ error: "No items provided." }); // Bad Request
+    }
+
+    const line_items = items.map(item => ({
+        price_data: {
+            currency: 'usd',
+            product_data: {
+                name: item.name,
+                images: [item.image],
+            },
+            unit_amount: item.new_price * 100,
+        },
+        quantity: item.quantity,
+    }));
+
+    try {
+        const session = await stripe.checkout.sessions.create({
+            line_items,
+            mode: 'payment',
+            success_url: `http://localhost:3000/success?session_id={CHECKOUT_SESSION_ID}`,
+            cancel_url: 'http://localhost:3000/cancel',
+        });
+
+        res.json({ id: session.id });
+    } catch (error) {
+        console.error("Error creating checkout session:", error);
+        res.status(500).json({ error: "Internal Server Error" }); // Ensure error is in JSON format
+    }
+});
+
+app.get('/payment-details', async (req, res) => {
+    const { session_id } = req.query;
+    try {
+        const session = await stripe.checkout.sessions.retrieve(session_id);
+        res.json(session);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 
 app.listen(PORT, (error)=>{
     if(!error){
@@ -269,3 +328,43 @@ app.listen(PORT, (error)=>{
         console.log("Error: " +error);
     }
 })
+
+
+
+/*
+try{
+        const user = await Users.findOne({_id: req.user.id});
+        const cartData = user.cartData;
+        const productIDs = Object.keys(cartData).map(id=> parseInt(id));
+        const products = await Product.find({id: { $in: productIDs}});
+
+        const line_items = products.map(product => {
+            const quantity = cartData[product.id];
+            return {
+                price_data: {
+                    currency: 'usd',
+                    product_data: {
+                        name: product.name,
+                        images: [product.image],
+                    },
+                    unit_amount: product.new_price * 100,
+                },
+                quantity: quantity,
+            };
+        });
+
+        const session = await stripe.checkout.sessions.create({
+            payment_method_types: ['card'],
+            line_items,
+            mode: 'payment',
+            success_url: 'http://localhost:3000/success',
+            cancel_url: 'http://localhost:3000/cancel',
+        });
+
+        res.json({id: session.id});
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({error: 'Something went wrong creating the checkout session'});
+    }
+
+*/
