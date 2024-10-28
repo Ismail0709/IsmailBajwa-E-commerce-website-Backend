@@ -6,6 +6,7 @@ const jwt = require("jsonwebtoken");
 const multer = require("multer");
 const path = require("path");
 const cors = require("cors");
+const nodemailer = require('nodemailer');
 const { type } = require("os");
 const { error } = require("console");
 require('dotenv').config();
@@ -15,12 +16,20 @@ app.use(express.json());
 app.use(cors({ // Adjust this to your frontend's URL
     credentials: true // Allow credentials (cookies, authorization headers)
 }));
-const SECRET_KEY = 'BJ_STORE_SECRET_KEY'
+const SECRET_KEY = process.env.JWT_SECRECT_KEY;
+
+const transporter = nodemailer.createTransport({
+    service: 'gmail', // Use your email provider
+    auth: {
+      user: process.env.EMAIL_USER, // Your email
+      pass: process.env.EMAIL_PASS, // Your email password or app password
+    },
+});
 
 
 //Database connection with MongoDB
 
-const dbURI = "mongodb+srv://Bajwa:bajwa2003@bj-store-cluster.zay3qp4.mongodb.net/?retryWrites=true&w=majority&appName=BJ-Store-Cluster"
+const dbURI = process.env.DB_URI;
 
 mongoose.connect(dbURI);
 
@@ -319,6 +328,26 @@ app.get('/payment-details', async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 });
+
+app.post('/subscribe', (req, res) => {
+    const { email } = req.body;
+  
+    const mailOptions = {
+      from: 'bajwa4402598@cloud.neduet.edu.pk', // Your email
+      to: 'ismailbajwa2003@gmail.com', // The email you want to receive subscriptions
+      subject: 'New Newsletter Subscription',
+      text: `A new subscriber has joined: ${email}`,
+    };
+  
+    transporter.sendMail(mailOptions, (error, info) => {
+      if (error) {
+        console.error('Error sending email:', error);
+        return res.status(500).send('Error sending email');
+      }
+      console.log('Email sent:', info.response);
+      res.status(200).send('Subscription successful');
+    });
+  });
 
 
 app.listen(PORT, (error)=>{
